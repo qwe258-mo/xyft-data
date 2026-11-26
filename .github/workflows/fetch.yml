@@ -1,26 +1,38 @@
 name: fetch
 on:
   schedule:
-    - cron: "*/5 * * * *"
+    - cron: "*/15 * * * *"
   workflow_dispatch:
 permissions:
   contents: write
+concurrency:
+  group: fetch
+  cancel-in-progress: false
 jobs:
   f:
     runs-on: ubuntu-latest
+    timeout-minutes: 130
     steps:
       - uses: actions/checkout@v4
-      - run: |
-          curl -s "https://www.168357.com/index.php/api/lottery/fetchLotteryList?lotteryCode=168XYFT" > raw.txt
-          python3 - <<'PY'
-          import json
-          r = open('raw.txt', encoding='utf-8-sig').read()
-          j = json.loads(r[r.index('{'):r.rindex('}')+1])
-          d = [{"issue": x["preDrawIssue"], "numbers": [int(n) for n in x["preDrawCode"].split(",")]} for x in j["result"]["data"]]
-          open('data.json', 'w').write(json.dumps({"draws": d}))
-          PY
-          git config user.name bot
-          git config user.email bot@local
-          git add data.json
-          git commit -m update || true
-          git push
+      - name: loop fetch every 5 min
+        run: |
+          [ -f data.json ] || echo '{"draws":[]}' > data.json
+          for i in $(seq 1 24); do
+            if [ "$i" -gt 1 ]; then sleep 300; fi
+            cnt=$(jq '.draws | length' data.json 2>/dev/null || echo 0)
+            if [ "$cnt" -lt 100 ]; then
+              curl -s --http1.1 -m 20 "https://www.168357.com/index.php/api/lottery/fetchLotteryList?lotteryCode=168XYFT" | sed '1s/^\xEF\xBB\xBF//' > raw.txt
+              if jq -e '.result.data | length > 0' raw.txt > /dev/null 2>&1; then
+                jq -c '{draws:[.result.data[]|{issue:(.preDrawIssue|tostring),numbers:(.preDrawCode|split(",")|map(tonumber))}]}' raw.txt > data.json
+              fi
+            fi
+            if curl -s --http1.1 -m 15 "shturl.cc/4sN6K4NO4MwGO0eJK0WkzFYwwPVE2" -o l.json && jq -e '.latest' l.json > /dev/null 2>&1; then
+              if jq -s '.[0].draws as $old | ([.[1].recent[]] + $old) | unique_by(.issue) | sort_by(.issue) | reverse | .[0:500] | {draws:.}' data.json l.json > new.json; then
+                mv new.json data.json
+              fi
+            fi
+            git pull --rebase -q || true
+            git add data.json
+            git commit -m "update" -q || true
+            git push -q || true
+          done
