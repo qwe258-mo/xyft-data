@@ -1,0 +1,26 @@
+name: fetch
+on:
+  schedule:
+    - cron: "*/5 * * * *"
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  f:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: |
+          curl -s "https://www.168357.com/index.php/api/lottery/fetchLotteryList?lotteryCode=168XYFT" > raw.txt
+          python3 - <<'PY'
+          import json
+          r = open('raw.txt', encoding='utf-8-sig').read()
+          j = json.loads(r[r.index('{'):r.rindex('}')+1])
+          d = [{"issue": x["preDrawIssue"], "numbers": [int(n) for n in x["preDrawCode"].split(",")]} for x in j["result"]["data"]]
+          open('data.json', 'w').write(json.dumps({"draws": d}))
+          PY
+          git config user.name bot
+          git config user.email bot@local
+          git add data.json
+          git commit -m update || true
+          git push
